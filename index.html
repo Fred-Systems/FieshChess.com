@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grandmaster Analytics & Book</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #161512; color: white; margin: 0; overflow: hidden; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #312e2b; border-radius: 4px; }
+        input[type=range] { height: 6px; -webkit-appearance: none; background: #312e2b; border-radius: 5px; cursor: pointer; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%; background: #3b82f6; cursor: pointer; border: 2px solid #fff; }
+        @keyframes slide-in-top { from { transform: translateY(-10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        @keyframes slide-in-right { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .animate-in { animation: slide-in-top 0.2s ease-out forwards; }
+        .slide-in-from-right { animation: slide-in-right 0.3s ease-out forwards; }
+        .board-grid { display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr); aspect-ratio: 1/1; }
+        .square { position: relative; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.1s; }
+        .piece { width: 90%; height: 90%; z-index: 10; pointer-events: none; }
+        .last-move { background-color: rgba(255, 255, 0, 0.2) !important; }
+        .selected-sq { background-color: rgba(59, 130, 246, 0.4) !important; }
+        .move-grid-row { display: grid; grid-template-columns: 24px 1fr 1fr; gap: 8px; margin-bottom: 6px; align-items: center; }
+        #book-content { max-height: 100%; overflow-y: auto; padding-bottom: 40px; }
+        .accuracy-badge { font-size: 8px; padding: 1px 4px; border-radius: 4px; font-weight: 900; margin-top: 2px; text-transform: uppercase; }
+    </style>
+</head>
+<body>
+    <div id="app" class="fixed inset-0 flex flex-col">
+        <!-- Header -->
+        <header class="w-full bg-[#262421] border-b border-white/5 flex items-center justify-between px-6 py-3 z-50 shrink-0">
+            <div class="flex items-center gap-6">
+                <div class="flex items-center gap-2 font-black italic text-lg tracking-tighter text-blue-500">
+                    <i data-lucide="trophy" class="w-5 h-5 text-yellow-500"></i> GRANDMASTER
+                </div>
+                <nav class="hidden md:flex items-center gap-1">
+                    <button onclick="setTab('analysis')" id="tab-analysis" class="tab-btn flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold transition bg-blue-600">
+                        <i data-lucide="bar-chart-3" class="w-4 h-4"></i> Analysis
+                    </button>
+                    <button onclick="togglePlayVsEngine()" id="btn-vs-engine" class="flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold transition text-gray-400 hover:bg-white/5">
+                        <i data-lucide="cpu" class="w-4 h-4"></i> Play vs Engine: <span id="vs-engine-status">OFF</span>
+                    </button>
+                </nav>
+            </div>
+
+            <div class="flex items-center gap-2">
+                <button onclick="openPgnModal()" class="flex items-center gap-2 px-3 py-2 rounded-lg text-[10px] font-black uppercase transition bg-white/5 text-gray-400 hover:text-white">
+                    <i data-lucide="file-input" class="w-4 h-4"></i> Import PGN
+                </button>
+                <button onclick="toggleBook()" id="book-toggle-btn" class="flex items-center gap-2 px-3 py-2 rounded-lg text-[10px] font-black uppercase transition bg-white/5 text-gray-400">
+                    <i data-lucide="book-open" class="w-4 h-4"></i> Opening Book
+                </button>
+                <div class="flex gap-1">
+                    <button onclick="runReview('short')" id="review-btn-short" class="bg-blue-600/10 text-blue-400 px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-blue-600/20 transition">Quick</button>
+                    <button onclick="runReview('long')" id="review-btn-long" class="bg-purple-600/10 text-purple-400 px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-purple-600/20 transition">Deep Review</button>
+                </div>
+                <button onclick="toggleConfig()" id="config-toggle-btn" class="p-2 rounded-lg transition bg-white/5 text-gray-400">
+                    <i data-lucide="settings-2" class="w-5 h-5"></i>
+                </button>
+            </div>
+        </header>
+
+        <!-- Review Progress Overlay -->
+        <div id="review-overlay" class="hidden fixed inset-0 bg-black/90 z-[110] flex flex-col items-center justify-center p-10">
+            <div class="w-full max-w-md space-y-6 text-center">
+                <i data-lucide="scan-search" class="w-16 h-16 text-blue-500 mx-auto animate-pulse"></i>
+                <h2 class="text-2xl font-black uppercase italic tracking-tighter">Analyzing Masterclass...</h2>
+                <div class="w-full bg-white/10 h-2 rounded-full overflow-hidden">
+                    <div id="review-progress" class="bg-blue-600 h-full transition-all duration-300" style="width: 0%"></div>
+                </div>
+                <p id="review-status" class="text-xs font-bold text-gray-500 uppercase tracking-widest">Processing Move 0 of 0</p>
+                <div class="flex flex-col gap-3">
+                    <button onclick="stopAndSeeReview()" class="bg-white/10 py-3 rounded-lg text-[10px] font-black uppercase text-white hover:bg-white/20 transition">Stop & See Results</button>
+                    <button onclick="cancelReview()" class="text-[10px] font-black uppercase text-red-500 hover:underline">Cancel & Discard</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- PGN Modal -->
+        <div id="pgn-modal" class="hidden fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-4">
+            <div class="bg-[#262421] w-full max-w-lg rounded-xl border border-white/10 overflow-hidden animate-in">
+                <div class="p-4 border-b border-white/5 flex justify-between items-center">
+                    <h3 class="text-xs font-black uppercase tracking-widest">Import PGN</h3>
+                    <button onclick="closePgnModal()"><i data-lucide="x" class="w-4 h-4"></i></button>
+                </div>
+                <div class="p-6 space-y-4">
+                    <textarea id="pgn-input" placeholder="Paste PGN here..." class="w-full h-48 bg-[#161512] border border-white/10 rounded-lg p-4 text-xs text-gray-300 font-mono focus:outline-none focus:border-blue-500"></textarea>
+                    <button onclick="importPgnSubmit()" class="w-full bg-blue-600 py-3 rounded-lg font-black uppercase text-xs hover:bg-blue-500">Load Game</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Book Sidebar -->
+        <div id="book-sidebar" class="hidden absolute right-0 top-[60px] w-80 h-[calc(100%-100px)] bg-[#262421] border-l border-white/10 z-[60] flex flex-col shadow-2xl slide-in-from-right">
+            <div class="p-4 border-b border-white/5 bg-[#161512] flex justify-between items-center">
+                <h3 class="text-[10px] font-black uppercase tracking-widest text-gray-400">Opening Explorer</h3>
+                <button onclick="toggleBook()"><i data-lucide="x" class="w-4 h-4"></i></button>
+            </div>
+            <div id="book-content" class="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar"></div>
+        </div>
+
+        <!-- Settings Bar -->
+        <div id="config-bar" class="hidden w-full bg-[#161512] border-b border-white/5 p-6 z-40">
+            <div class="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-4 gap-4 animate-in">
+                <div class="bg-[#262421] p-4 rounded-xl border border-white/10 space-y-3">
+                    <div class="text-[10px] font-black uppercase text-gray-500">Presentation</div>
+                    <div class="flex items-center justify-between"><span class="text-xs">Zoom</span><span id="zoom-val" class="text-xs font-bold">100%</span></div>
+                    <input type="range" min="40" max="100" value="100" oninput="updateZoom(this.value)" class="w-full accent-blue-500" />
+                    <button onclick="flipBoard()" class="w-full bg-[#161512] py-2 rounded-lg text-[10px] font-black uppercase border border-white/5">Flip Board</button>
+                </div>
+                <div class="bg-[#262421] p-4 rounded-xl border border-white/10 space-y-3">
+                    <div class="text-[10px] font-black uppercase text-gray-500">Engine Match</div>
+                    <div class="space-y-2">
+                        <div class="flex justify-between items-center"><span class="text-[9px] font-bold text-gray-400">White Level</span><select id="w-level" class="bg-[#161512] text-[10px] p-1 rounded"></select></div>
+                        <div class="flex justify-between items-center"><span class="text-[9px] font-bold text-gray-400">Black Level</span><select id="b-level" class="bg-[#161512] text-[10px] p-1 rounded"></select></div>
+                        <button id="autoplay-btn" onclick="toggleAutoplay()" class="w-full py-2 rounded-lg text-[10px] font-black uppercase flex items-center justify-center gap-2 bg-green-600/20 text-green-500 border border-green-500/30">
+                            <i data-lucide="play" class="w-3 h-3"></i> <span id="autoplay-status">Start Auto-Play</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="bg-[#262421] p-4 rounded-xl border border-white/10 space-y-3">
+                    <div class="text-[10px] font-black uppercase text-gray-500">Personalities</div>
+                    <div id="w-personas" class="grid grid-cols-2 gap-1"></div>
+                    <div class="text-[8px] font-bold text-gray-500 uppercase text-center">White Persona • Black Persona</div>
+                    <div id="b-personas" class="grid grid-cols-2 gap-1"></div>
+                </div>
+                <div class="bg-[#262421] p-4 rounded-xl border border-white/10 space-y-3 flex flex-col h-64">
+                    <div class="text-[10px] font-black uppercase text-gray-500">Chess.com Import</div>
+                    <div class="flex gap-2">
+                        <input id="username-input" type="text" placeholder="Username" class="flex-1 bg-[#161512] border border-white/10 rounded px-2 py-1 text-xs" />
+                        <button onclick="fetchChessComGames(true)" class="bg-blue-600 px-3 py-1 rounded text-[10px] font-black">IMPORT</button>
+                    </div>
+                    <div id="games-list" class="flex-1 overflow-y-auto space-y-1 mt-2 custom-scrollbar"></div>
+                    <button id="load-more-btn" onclick="fetchChessComGames(false)" class="hidden w-full bg-white/5 py-2 mt-2 rounded text-[9px] font-black uppercase hover:bg-white/10">Fetch 20 More Games</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main -->
+        <main class="flex-1 overflow-y-auto p-4 lg:p-8 flex flex-col items-center">
+            <div id="layout-container" class="w-full max-w-7xl flex flex-col lg:flex-row gap-8 items-center lg:items-start transition-all duration-300">
+                <div id="board-container" class="flex flex-col shrink-0">
+                    <div class="flex items-center justify-between mb-4 px-2">
+                        <div class="flex items-center gap-3">
+                            <span id="eval-text" class="text-3xl font-black tabular-nums">0.0</span>
+                            <div id="eval-badge" class="h-6 flex items-center px-3 rounded-full text-[9px] font-black uppercase tracking-wider bg-white text-black">Balanced</div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <i id="thinking-icon" data-lucide="activity" class="hidden w-3 h-3 text-blue-500 animate-pulse"></i>
+                            <span id="depth-text" class="text-[10px] text-gray-500 font-bold uppercase tracking-widest">SF DEPTH 0</span>
+                        </div>
+                    </div>
+
+                    <div id="board" class="board-grid bg-[#312e2b] rounded shadow-2xl overflow-hidden border-4 border-[#312e2b]"></div>
+
+                    <div class="grid grid-cols-5 gap-2 mt-4">
+                        <button onclick="goToMove(0)" class="bg-[#262421] py-3 rounded-lg flex items-center justify-center hover:bg-[#312e2b]"><i data-lucide="zap" class="w-4 h-4"></i></button>
+                        <button onclick="prevMove()" class="bg-[#262421] py-3 rounded-lg flex items-center justify-center hover:bg-[#312e2b]"><i data-lucide="chevron-left"></i></button>
+                        <div class="bg-[#262421] rounded-lg flex flex-col items-center justify-center">
+                            <span class="text-[8px] text-gray-500 font-bold uppercase">MOVE</span>
+                            <span id="move-count" class="text-xs font-black">0</span>
+                        </div>
+                        <button onclick="nextMove()" class="bg-[#262421] py-3 rounded-lg flex items-center justify-center hover:bg-[#312e2b]"><i data-lucide="chevron-right"></i></button>
+                        <button onclick="resetBoard()" class="bg-red-500/10 text-red-500 py-3 rounded-lg flex items-center justify-center hover:bg-red-500/20"><i data-lucide="refresh-ccw" class="w-4 h-4"></i></button>
+                    </div>
+                </div>
+
+                <div class="flex-1 w-full min-w-[320px] flex flex-col gap-4">
+                    <div class="bg-[#262421] rounded-xl border border-white/5 flex flex-col h-[520px] overflow-hidden shadow-xl">
+                        <div class="px-4 py-3 border-b border-white/5 flex items-center justify-between bg-[#161512]/50">
+                            <div class="flex items-center gap-2">
+                                <i data-lucide="bar-chart-3" class="w-3 h-3 text-blue-500"></i>
+                                <span id="feed-title" class="text-[10px] font-black uppercase text-gray-400">History & Analysis</span>
+                            </div>
+                        </div>
+                        <div id="move-feed" class="flex-1 overflow-y-auto p-4 custom-scrollbar"></div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer class="w-full py-4 bg-[#161512] border-t border-white/5 text-center">
+            <p id="copyright" class="text-[10px] font-bold text-gray-500 uppercase tracking-widest"></p>
+        </footer>
+    </div>
+
+    <script>
+        const PIECE_IMAGES = {
+            wP: 'https://images.chesscomfiles.com/chess-themes/pieces/neo/150/wp.png',
+            wN: 'https://images.chesscomfiles.com/chess-themes/pieces/neo/150/wn.png',
+            wB: 'https://images.chesscomfiles.com/chess-themes/pieces/neo/150/wb.png',
+            wR: 'https://images.chesscomfiles.com/chess-themes/pieces/neo/150/wr.png',
+            wP: 'https://images.chesscomfiles.com/chess-themes/pieces/neo/150/wp.png',
+            wN: 'https://images.chesscomfiles.com/chess-themes/pieces/neo/150/wn.png',
+            wB: 'https://images.chesscomfiles.com/chess-themes/pieces/neo/150/wb.png',
+            wR: 'https://images.chesscomfiles.com/chess-themes/pieces/neo/150/wr.png',
+            wQ: 'https://images.chesscomfiles.com/chess-themes/pieces/neo/150/wq.png',
+            wK: 'https://images.chesscomfiles.com/chess-themes/pieces/neo/150/wk.png',
+            bP: 'https://images.chesscomfiles.com/chess-themes/pieces/neo/150/bp.png',
+            bN: 'https://images.chesscomfiles.com/chess-themes/pieces/neo/150/bn.png',
+            bB: 'https://images.chesscomfiles.com/chess-themes/pieces/neo/150/bb.png',
+            bR: 'https://images.chesscomfiles.com/chess-themes/pieces/neo/150/br.png',
+            bQ: 'https://images.chesscomfiles.com/chess-themes/pieces/neo/150/bq.png',
+            bK: 'https://images.chesscomfiles.com/chess-themes/pieces/neo/150/bk.png',
+        };
+
+        const ENGINE_STYLES = {
+            BALANCED: { label: 'Balanced', icon: 'swords', skill: 10, time: 800 },
+            AGGRESSIVE: { label: 'Aggressive', icon: 'target', skill: 20, time: 400 },
+            SOLID: { label: 'Solid', icon: 'shield-check', skill: 15, time: 1500 },
+            CHAOTIC: { label: 'Chaotic', icon: 'dices', skill: 0, time: 200 }
+        };
+
+        const ENGINE_LEVELS = [
+            { label: 'Beginner', elo: 800, skill: 0 },
+            { label: 'Intermediate', elo: 1400, skill: 5 },
+            { label: 'Advanced', elo: 2000, skill: 12 },
+            { label: 'Master', elo: 2600, skill: 18 },
+            { label: 'Stockfish Max', elo: 3500, skill: 20 }
+        ];
+
+        let game = new Chess();
+        let historyFens = [game.fen()];
+        let reviewAnalysis = []; 
+        let viewIndex = -1;
+        let selectedSquare = null;
+        let playerColor = 'w';
+        let autoPlay = false;
+        let playVsEngine = false;
+        let whiteConfig = { level: ENGINE_LEVELS[1], style: 'BALANCED' };
+        let blackConfig = { level: ENGINE_LEVELS[1], style: 'BALANCED' };
+        let engineWorker = null;
+        let reviewWorker = null;
+        let activeTab = 'analysis';
+        let isReviewing = false;
+        
+        let cachedChessComGames = [];
+        let chessComCursor = 0;
+
+        window.onload = () => {
+            initEngine();
+            renderLevels();
+            renderPersonas();
+            renderBoard();
+            lucide.createIcons();
+            startAnalysis();
+            updateCopyright();
+        };
+
+        function updateCopyright() {
+            const year = new Date().getFullYear();
+            document.getElementById('copyright').innerText = `copyright${year}Fieshproductions`;
+        }
+
+        function initEngine() {
+            engineWorker = new Worker(URL.createObjectURL(new Blob([`
+                importScripts('https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js');
+            `], { type: 'application/javascript' })));
+            
+            engineWorker.onmessage = (e) => {
+                const line = e.data;
+                if (line.startsWith('info depth')) {
+                    const scoreMatch = line.match(/score cp (-?\d+)/);
+                    const mateMatch = line.match(/score mate (-?\d+)/);
+                    const depthMatch = line.match(/depth (\d+)/);
+                    if (depthMatch) {
+                        document.getElementById('depth-text').innerText = `SF DEPTH ${depthMatch[1]}`;
+                    }
+                    if (scoreMatch || mateMatch) {
+                        let cp = scoreMatch ? parseInt(scoreMatch[1]) : (parseInt(mateMatch[1]) > 0 ? 1000 : -1000);
+                        const turn = game.turn();
+                        const whiteSidedScore = (turn === 'w' ? cp : -cp) / 100;
+                        document.getElementById('eval-text').innerText = whiteSidedScore.toFixed(1);
+                        updateEvalBadge(whiteSidedScore);
+                    }
+                } else if (line.startsWith('bestmove')) {
+                    document.getElementById('thinking-icon').classList.add('hidden');
+                    const move = line.split(' ')[1];
+                    if (move && move !== '(none)' && ((playVsEngine && game.turn() !== playerColor) || autoPlay)) {
+                        setTimeout(() => makeMove({ from: move.substring(0, 2), to: move.substring(2, 4), promotion: move.substring(4,5) || 'q' }), 400);
+                    }
+                }
+            };
+            engineWorker.postMessage('uci');
+
+            reviewWorker = new Worker(URL.createObjectURL(new Blob([`
+                importScripts('https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js');
+            `], { type: 'application/javascript' })));
+            reviewWorker.postMessage('uci');
+        }
+
+        async function runReview(type) {
+            const history = game.history();
+            if (history.length === 0) return;
+
+            isReviewing = true;
+            reviewAnalysis = [];
+            const overlay = document.getElementById('review-overlay');
+            overlay.classList.remove('hidden');
+            
+            const depth = type === 'short' ? 12 : 18;
+            const timePerMove = type === 'short' ? 150 : 600;
+            
+            let tempChess = new Chess();
+            const fensToAnalyze = [tempChess.fen()];
+            history.forEach(m => {
+                tempChess.move(m);
+                fensToAnalyze.push(tempChess.fen());
+            });
+
+            for (let i = 0; i < fensToAnalyze.length; i++) {
+                if (!isReviewing) break;
+                
+                document.getElementById('review-progress').style.width = `${(i / fensToAnalyze.length) * 100}%`;
+                document.getElementById('review-status').innerText = `Analyzing Move ${i} of ${fensToAnalyze.length - 1}`;
+                
+                const evaluation = await analyzeFen(fensToAnalyze[i], depth, timePerMove);
+                reviewAnalysis.push(evaluation);
+            }
+
+            if (isReviewing) {
+                finishReview();
+            }
+        }
+
+        function finishReview() {
+            isReviewing = false;
+            document.getElementById('review-overlay').classList.add('hidden');
+            goToMove(0); // Go to start of game to see full review
+            renderMoveFeed();
+            lucide.createIcons();
+            startAnalysis();
+        }
+
+        function stopAndSeeReview() {
+            finishReview();
+        }
+
+        function analyzeFen(fen, depth, time) {
+            return new Promise((resolve) => {
+                let cp = 0;
+                let bestMove = '';
+                
+                const listener = (e) => {
+                    const line = e.data;
+                    if (line.startsWith('info depth')) {
+                        const cpMatch = line.match(/score cp (-?\d+)/);
+                        const mateMatch = line.match(/score mate (-?\d+)/);
+                        if (cpMatch) cp = parseInt(cpMatch[1]);
+                        if (mateMatch) cp = parseInt(mateMatch[1]) > 0 ? 1000 : -1000;
+                    }
+                    if (line.startsWith('bestmove')) {
+                        bestMove = line.split(' ')[1];
+                        reviewWorker.removeEventListener('message', listener);
+                        resolve({ fen, cp, bestMove });
+                    }
+                };
+
+                reviewWorker.addEventListener('message', listener);
+                reviewWorker.postMessage(`position fen ${fen}`);
+                reviewWorker.postMessage(`go depth ${depth} movetime ${time}`);
+            });
+        }
+
+        function cancelReview() {
+            isReviewing = false;
+            reviewAnalysis = [];
+            document.getElementById('review-overlay').classList.add('hidden');
+            renderMoveFeed();
+        }
+
+        function startAnalysis() {
+            const currentFen = viewIndex === -1 ? game.fen() : historyFens[viewIndex];
+            engineWorker.postMessage(`position fen ${currentFen}`);
+            const turn = (viewIndex === -1) ? game.turn() : (new Chess(currentFen).turn());
+            
+            if ((viewIndex === -1) && ((playVsEngine && turn !== playerColor) || autoPlay)) {
+                document.getElementById('thinking-icon').classList.remove('hidden');
+                const config = turn === 'w' ? whiteConfig : blackConfig;
+                engineWorker.postMessage(`setoption name Skill Level value ${config.level.skill}`);
+                engineWorker.postMessage(`go movetime ${ENGINE_STYLES[config.style].time}`);
+            } else {
+                engineWorker.postMessage('go depth 14');
+            }
+        }
+
+        function handleSquareClick(sq) {
+            if (viewIndex !== -1) return;
+            if (selectedSquare === sq) {
+                selectedSquare = null;
+            } else if (selectedSquare) {
+                const move = makeMove({ from: selectedSquare, to: sq, promotion: 'q' });
+                if (!move) selectedSquare = sq;
+            } else {
+                const piece = game.get(sq);
+                if (piece && piece.color === game.turn()) selectedSquare = sq;
+            }
+            renderBoard();
+        }
+
+        function makeMove(moveObj) {
+            const result = game.move(moveObj);
+            if (result) {
+                historyFens.push(game.fen());
+                viewIndex = -1;
+                selectedSquare = null;
+                renderBoard();
+                renderMoveFeed();
+                startAnalysis();
+                if (!document.getElementById('book-sidebar').classList.contains('hidden')) fetchOpeningBook();
+                return true;
+            }
+            return false;
+        }
+
+        function renderBoard() {
+            const boardEl = document.getElementById('board');
+            boardEl.innerHTML = '';
+            const fen = viewIndex === -1 ? game.fen() : historyFens[viewIndex];
+            const temp = new Chess(fen);
+            const grid = temp.board();
+            const order = playerColor === 'w' ? [0,1,2,3,4,5,6,7] : [7,6,5,4,3,2,1,0];
+
+            const history = game.history({verbose: true});
+            const lastMove = viewIndex === -1 ? history[history.length - 1] : (viewIndex > 0 ? history[viewIndex - 1] : null);
+
+            for (let i of order) {
+                for (let j of order) {
+                    const squareName = String.fromCharCode(97 + j) + (8 - i);
+                    const piece = grid[i][j];
+                    const sqEl = document.createElement('div');
+                    sqEl.className = `square ${(i + j) % 2 === 0 ? 'bg-[#ebecd0]' : 'bg-[#779556]'}`;
+                    sqEl.onclick = () => handleSquareClick(squareName);
+
+                    if (selectedSquare === squareName) sqEl.classList.add('selected-sq');
+                    if (lastMove && (lastMove.from === squareName || lastMove.to === squareName)) sqEl.classList.add('last-move');
+
+                    if (piece) {
+                        const img = document.createElement('img');
+                        img.src = PIECE_IMAGES[piece.color + piece.type.toUpperCase()];
+                        img.className = "piece";
+                        sqEl.appendChild(img);
+                    }
+                    boardEl.appendChild(sqEl);
+                }
+            }
+            document.getElementById('move-count').innerText = viewIndex === -1 ? historyFens.length - 1 : viewIndex;
+        }
+
+        function getAccuracyData(idx) {
+            if (reviewAnalysis.length <= idx + 1) return null;
+            
+            const prev = reviewAnalysis[idx];
+            const curr = reviewAnalysis[idx + 1];
+            
+            const turn = (idx % 2 === 0) ? 1 : -1;
+            const prevEvalWhite = prev.cp * (idx % 2 === 0 ? 1 : -1);
+            const currEvalWhite = curr.cp * ((idx + 1) % 2 === 0 ? 1 : -1);
+            
+            const loss = (idx % 2 === 0) ? (prevEvalWhite - currEvalWhite) : (currEvalWhite - prevEvalWhite);
+
+            const betterSan = uciToSanAtFen(curr.bestMove, prev.fen);
+
+            if (loss <= 20) return { label: 'Best', color: 'bg-emerald-500', eval: currEvalWhite/100 };
+            if (loss <= 50) return { label: 'Excellent', color: 'bg-green-500', eval: currEvalWhite/100 };
+            if (loss <= 100) return { label: 'Good', color: 'bg-blue-400', eval: currEvalWhite/100 };
+            if (loss <= 200) return { label: 'Inaccuracy', color: 'bg-yellow-500', eval: currEvalWhite/100, better: betterSan };
+            if (loss <= 450) return { label: 'Mistake', color: 'bg-orange-500', eval: currEvalWhite/100, better: betterSan };
+            return { label: 'Blunder', color: 'bg-red-500', eval: currEvalWhite/100, better: betterSan };
+        }
+
+        function uciToSanAtFen(uci, fen) {
+            if (!uci || uci === '(none)') return null;
+            try {
+                const temp = new Chess(fen);
+                const move = temp.move({ from: uci.substring(0, 2), to: uci.substring(2, 4), promotion: uci.substring(4, 5) || 'q' });
+                return move ? move.san : uci;
+            } catch(e) { return uci; }
+        }
+
+        function renderMoveFeed() {
+            const feed = document.getElementById('move-feed');
+            feed.innerHTML = '';
+            const history = game.history();
+            
+            for (let i = 0; i < history.length; i += 2) {
+                const row = document.createElement('div');
+                row.className = 'move-grid-row';
+                
+                const num = document.createElement('div');
+                num.className = 'text-[9px] font-black opacity-20';
+                num.innerText = Math.floor(i / 2) + 1;
+                row.appendChild(num);
+
+                const createCard = (idx) => {
+                    if (idx >= history.length) return document.createElement('div');
+                    const card = document.createElement('div');
+                    card.className = `p-3 rounded-lg border cursor-pointer transition flex flex-col ${viewIndex === idx + 1 ? 'bg-blue-600 text-white border-blue-400' : 'bg-[#161512] border-white/5 text-gray-400'}`;
+                    card.onclick = () => goToMove(idx + 1);
+                    
+                    const moveSpan = document.createElement('span');
+                    moveSpan.className = "font-bold text-sm";
+                    moveSpan.innerText = history[idx];
+                    card.appendChild(moveSpan);
+
+                    const acc = getAccuracyData(idx);
+                    if (acc) {
+                        const badgeRow = document.createElement('div');
+                        badgeRow.className = "flex items-center gap-1 mt-1";
+                        
+                        const badge = document.createElement('span');
+                        badge.className = `accuracy-badge ${acc.color} text-white`;
+                        badge.innerText = acc.label;
+                        badgeRow.appendChild(badge);
+
+                        const evalSpan = document.createElement('span');
+                        evalSpan.className = "text-[7px] font-black opacity-40";
+                        evalSpan.innerText = acc.eval.toFixed(1);
+                        badgeRow.appendChild(evalSpan);
+                        
+                        card.appendChild(badgeRow);
+
+                        if (acc.better && (acc.label === 'Mistake' || acc.label === 'Blunder' || acc.label === 'Inaccuracy')) {
+                            const betterText = document.createElement('span');
+                            betterText.className = "text-[7px] mt-1 opacity-60 italic";
+                            betterText.innerText = `Instead: ${acc.better}`;
+                            card.appendChild(betterText);
+                        }
+                    }
+                    
+                    return card;
+                };
+
+                row.appendChild(createCard(i));
+                row.appendChild(createCard(i + 1));
+                feed.appendChild(row);
+            }
+            feed.scrollTop = feed.scrollHeight;
+        }
+
+        async function fetchOpeningBook() {
+            const content = document.getElementById('book-content');
+            content.innerHTML = '<div class="text-[10px] animate-pulse">Loading Lichess Masters...</div>';
+            try {
+                const res = await fetch(`https://explorer.lichess.ovh/masters?fen=${encodeURIComponent(game.fen())}&topGames=10`);
+                const data = await res.json();
+                let html = '';
+                if (data.opening) html += `<div class="p-2 mb-2 bg-blue-600/10 rounded border border-blue-500/20 text-xs"><b>${data.opening.name}</b></div>`;
+                data.moves?.forEach(m => {
+                    html += `<button onclick="makeMove('${m.san}')" class="w-full flex justify-between p-2 mb-1 bg-[#161512] border border-white/5 text-[10px] hover:bg-white/5">
+                        <span class="font-bold text-blue-400">${m.san}</span>
+                        <span>W:${m.white}% D:${m.draws}% B:${m.black}%</span>
+                    </button>`;
+                });
+                if (data.topGames?.length) {
+                    html += '<div class="text-[9px] font-black uppercase text-gray-500 mt-4 mb-2">Master Games</div>';
+                    data.topGames.forEach(g => {
+                        html += `<button onclick="loadLichessGame('${g.id}')" class="w-full p-2 mb-1 bg-[#161512] border border-white/5 text-[9px] text-left hover:bg-blue-600/10 transition">
+                            <div class="truncate">${g.white.name} vs ${g.black.name}</div>
+                            <div class="opacity-50">${g.year} • ${g.winner || 'Draw'}</div>
+                        </button>`;
+                    });
+                }
+                content.innerHTML = html;
+            } catch (e) { content.innerHTML = '<div class="text-xs opacity-50">Lichess API Offline</div>'; }
+        }
+
+        async function loadLichessGame(id) {
+            try {
+                const res = await fetch(`https://lichess.org/game/export/${id}?moves=true&tags=true&clocks=false`, {
+                    headers: { 'Accept': 'application/x-chess-pgn' }
+                });
+                const pgn = await res.text();
+                if (game.load_pgn(pgn)) syncGame();
+            } catch (e) { console.error("Error loading Master Game", e); }
+        }
+
+        async function fetchChessComGames(reset = false) {
+            const user = document.getElementById('username-input').value;
+            if (!user) return;
+            const list = document.getElementById('games-list');
+            const loadMoreBtn = document.getElementById('load-more-btn');
+            
+            if (reset) {
+                list.innerHTML = '<div class="text-[10px] animate-pulse">Fetching Archives...</div>';
+                chessComCursor = 0;
+                cachedChessComGames = [];
+            }
+
+            try {
+                if (cachedChessComGames.length === 0) {
+                    const archRes = await fetch(`https://api.chess.com/pub/player/${user}/games/archives`);
+                    const archData = await archRes.json();
+                    if (!archData.archives?.length) throw new Error();
+                    
+                    const recentArchives = archData.archives.slice(-3).reverse();
+                    for (const arc of recentArchives) {
+                        const gRes = await fetch(arc);
+                        const gData = await gRes.json();
+                        cachedChessComGames.push(...gData.games.reverse());
+                    }
+                }
+
+                const batch = cachedChessComGames.slice(chessComCursor, chessComCursor + 20);
+                if (reset) list.innerHTML = '';
+                
+                batch.forEach((g) => {
+                    const gamePgn = g.pgn.replace(/\\n/g, '\n');
+                    const div = document.createElement('div');
+                    div.innerHTML = `<button onclick="loadImportedPgn(this.dataset.pgn)" data-pgn="${encodeURIComponent(gamePgn)}" class="w-full p-2 mb-1 bg-[#161512] border border-white/5 text-[9px] text-left hover:bg-blue-600/20">
+                        <span class="text-blue-400 font-bold">${g.white.username}</span> vs <span class="text-blue-400 font-bold">${g.black.username}</span>
+                        <div class="opacity-40 text-[7px] mt-1">${new Date(g.end_time * 1000).toLocaleDateString()} • ${g.white.rating} vs ${g.black.rating}</div>
+                    </button>`;
+                    list.appendChild(div.firstChild);
+                });
+
+                chessComCursor += 20;
+                loadMoreBtn.classList.remove('hidden');
+            } catch (e) { 
+                list.innerHTML = '<div class="text-red-500 text-[10px]">Failed to load player archives.</div>'; 
+            }
+        }
+
+        function loadImportedPgn(encodedPgn) {
+            const pgn = decodeURIComponent(encodedPgn);
+            if (game.load_pgn(pgn)) syncGame();
+        }
+
+        function syncGame() {
+            historyFens = [new Chess().fen()];
+            const temp = new Chess();
+            game.history().forEach(m => { temp.move(m); historyFens.push(temp.fen()); });
+            viewIndex = -1;
+            reviewAnalysis = []; 
+            renderBoard();
+            renderMoveFeed();
+            startAnalysis();
+        }
+
+        function goToMove(idx) { 
+            viewIndex = idx; 
+            renderBoard(); 
+            renderMoveFeed();
+            if (idx === -1) startAnalysis(); 
+        }
+        function prevMove() { viewIndex = Math.max(0, (viewIndex === -1 ? historyFens.length - 1 : viewIndex) - 1); renderBoard(); renderMoveFeed(); }
+        function nextMove() { if (viewIndex !== -1 && viewIndex < historyFens.length - 1) viewIndex++; else viewIndex = -1; renderBoard(); renderMoveFeed(); if (viewIndex === -1) startAnalysis(); }
+        function resetBoard() { game = new Chess(); historyFens = [game.fen()]; viewIndex = -1; reviewAnalysis = []; renderBoard(); renderMoveFeed(); startAnalysis(); }
+        function togglePlayVsEngine() { playVsEngine = !playVsEngine; document.getElementById('vs-engine-status').innerText = playVsEngine ? "ON" : "OFF"; if (playVsEngine) { playerColor = game.turn(); startAnalysis(); } }
+        function toggleAutoplay() { 
+            autoPlay = !autoPlay; 
+            const btn = document.getElementById('autoplay-btn');
+            const status = document.getElementById('autoplay-status');
+            if (autoPlay) {
+                btn.classList.replace('bg-green-600/20', 'bg-red-600/20');
+                btn.classList.replace('text-green-500', 'text-red-500');
+                status.innerText = "Stop Auto-Play";
+                startAnalysis();
+            } else {
+                btn.classList.replace('bg-red-600/20', 'bg-green-600/20');
+                btn.classList.replace('text-red-500', 'text-green-500');
+                status.innerText = "Start Auto-Play";
+            }
+        }
+        function toggleBook() { document.getElementById('book-sidebar').classList.toggle('hidden'); if (!document.getElementById('book-sidebar').classList.contains('hidden')) fetchOpeningBook(); }
+        function toggleConfig() { document.getElementById('config-bar').classList.toggle('hidden'); }
+        function openPgnModal() { document.getElementById('pgn-modal').classList.remove('hidden'); }
+        function closePgnModal() { document.getElementById('pgn-modal').classList.add('hidden'); }
+        function importPgnSubmit() { if (game.load_pgn(document.getElementById('pgn-input').value)) { syncGame(); closePgnModal(); } }
+        function updateZoom(v) { document.getElementById('board-container').style.width = `${600 * (v/100)}px`; document.getElementById('zoom-val').innerText = v + '%'; }
+        function flipBoard() { playerColor = playerColor === 'w' ? 'b' : 'w'; renderBoard(); }
+        function updateEvalBadge(s) { const b = document.getElementById('eval-badge'); b.innerText = s > 1 ? "White Winning" : (s < -1 ? "Black Winning" : "Balanced"); b.className = `h-6 flex items-center px-3 rounded-full text-[9px] font-black uppercase ${s > 1 ? 'bg-white text-black' : (s < -1 ? 'bg-black text-white' : 'bg-gray-600 text-white')}`; }
+        function renderLevels() { const wS = document.getElementById('w-level'), bS = document.getElementById('b-level'); ENGINE_LEVELS.forEach(l => { const o = `<option value="${l.label}">${l.label}</option>`; wS.innerHTML += o; bS.innerHTML += o; }); wS.value = whiteConfig.level.label; bS.value = blackConfig.level.label; }
+        function renderPersonas() { const wp = document.getElementById('w-personas'), bp = document.getElementById('b-personas'); Object.entries(ENGINE_STYLES).forEach(([k, s]) => { wp.innerHTML += `<button onclick="whiteConfig.style='${k}'; startAnalysis();" class="p-2 rounded bg-[#161512] border border-white/5 text-[8px] font-black uppercase hover:border-blue-500">${s.label}</button>`; bp.innerHTML += `<button onclick="blackConfig.style='${k}'; startAnalysis();" class="p-2 rounded bg-[#161512] border border-white/5 text-[8px] font-black uppercase hover:border-blue-500">${s.label}</button>`; }); }
+        function setTab(t) { activeTab = t; }
+    </script>
+</body>
+</html>
